@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  sandbox-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      - SANDBOX_PORT=50051
+    volumes:
+      - sandbox-workspace:/tmp/ai-developer-sandbox
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; print('ok')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  sandbox-workspace:

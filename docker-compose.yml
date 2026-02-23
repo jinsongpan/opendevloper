@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  opensandbox:
+    image: node:20-alpine
+    container_name: ai-developer-sandbox
+    command: sleep infinity
+    volumes:
+      - ./projects:/app
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '2.0'
+    networks:
+      - ai-developer-net
+
+  agent-postgres:
+    image: postgres:16-alpine
+    container_name: agent-postgres
+    environment:
+      POSTGRES_DB: agent_db
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent_password
+    volumes:
+      - postgres_agent_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - ai-developer-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  agent-server:
+    build: ./agent-server
+    container_name: agent-server
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://agent:agent_password@agent-postgres:5432/agent_db
+      SANDBOX_GRPC_URL: host.docker.internal:50051
+    depends_on:
+      agent-postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ai-developer-net
+
+networks:
+  ai-developer-net:
+    driver: bridge
+
+volumes:
+  postgres_agent_data:

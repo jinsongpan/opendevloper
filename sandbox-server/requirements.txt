@@ -1,0 +1,7 @@
+name: sandbox-server
+version: 1.0.0
+description: Remote sandbox gRPC service
+main: main.py
+dependencies:
+  - grpcio==1.59.0
+  - grpcio-tools==1.59.0
