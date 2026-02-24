@@ -79,7 +79,13 @@ export function useChat() {
 
     dispatch({ type: 'SET_EXECUTION_STATUS', payload: 'planning' });
 
-    const isModification = state.messages.length > 0;
+    const hasExistingFiles = state.sandboxId && state.files && state.files.length > 0;
+    const isModification = state.messages.length > 0 || hasExistingFiles;
+
+    const history = state.messages.map((msg: any) => ({
+      role: msg.role,
+      content: msg.content,
+    }));
 
     try {
       const response = await fetchWithTimeout(`${API_BASE}/sandbox/plan`, {
@@ -90,6 +96,8 @@ export function useChat() {
           settings: state.settings,
           provider: state.model,
           isModification,
+          history,
+          sandboxId: state.sandboxId,
         }),
       }, 300000, abortControllerRef.current);
 

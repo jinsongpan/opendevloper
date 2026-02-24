@@ -210,7 +210,7 @@ export class DeepAgentsService {
     }
   }
 
-  async generatePlan(requirements: string, existingFiles?: { path: string; content: string }[], isModification?: boolean): Promise<PlanStep[]> {
+  async generatePlan(requirements: string, existingFiles?: { path: string; content: string }[], isModification?: boolean, history?: { role: string; content: string }[]): Promise<PlanStep[]> {
     const { provider, apiKey, model } = this.getActiveProvider();
 
     const context = existingFiles?.length
@@ -235,6 +235,8 @@ ${modeDescription}
 - Python 项目必须先生成 requirements.txt，然后安装依赖，最后启动服务器
 - Node.js 项目必须先 npm install，然后启动服务器
 - 不要在创建文件之前就安装依赖或启动服务器
+- 【关键】如果项目是 Web 应用、前端页面、HTML 页面、React/Vue/Angular 项目，或任何需要浏览器访问的项目，**必须**添加 RUN_SERVER 步骤启动开发服务器（如 npm run dev、python app.py、flask run 等）
+- 如果项目只需要生成静态 HTML 文件，也必须创建 index.html 文件
 
 请以JSON格式返回计划，不要包含其他内容。格式如下:
 {
@@ -242,7 +244,7 @@ ${modeDescription}
     {
       "type": "CREATE_FILE" | "EDIT_FILE" | "DELETE_FILE" | "RUN_COMMAND" | "RUN_SERVER" | "INSTALL_PACKAGE" | "OPEN_BROWSER",
       "description": "步骤描述",
-      "target": "文件路径(如果是文件操作)或服务器端口(仅RUN_SERVER类型，默认为8000)",
+      "target": "文件路径(如果是文件操作)或服务器端口(仅RUN_SERVER类型，默认为8080)",
       "content": "文件内容(如果是创建/编辑文件)",
       "command": "命令(如果是运行命令或启动服务器)",
       "url": "浏览器URL(仅OPEN_BROWSER类型使用)"
@@ -251,9 +253,23 @@ ${modeDescription}
   "estimatedTime": "预计时间"
 }`;
 
-    const messages: Message[] = [
-      { id: '1', role: 'user', content: prompt, timestamp: Date.now() },
-    ];
+    const messages: Message[] = [];
+    
+    if (history && history.length > 0) {
+      for (let i = 0; i < history.length; i++) {
+        const validRole = history[i].role === 'user' || history[i].role === 'assistant' 
+          ? history[i].role as 'user' | 'assistant'
+          : 'user';
+        messages.push({
+          id: `msg-${i}`,
+          role: validRole,
+          content: history[i].content,
+          timestamp: Date.now() - (history.length - 1 - i) * 1000,
+        });
+      }
+    }
+    
+    messages.push({ id: `msg-${messages.length}`, role: 'user', content: prompt, timestamp: Date.now() });
 
     const response = await this.chat(messages);
     
@@ -276,26 +292,140 @@ ${modeDescription}
     return this.generateDefaultPlan(requirements);
   }
 
+  private isWebProject(requirements: string): boolean {
+    const webKeywords = [
+      'web', 'html', 'css', 'javascript', '前端', '页面', '网站',
+      'react', 'vue', 'angular', 'svelte', 'next', 'nuxt',
+      'frontend', 'browser', '浏览器', '界面', 'ui',
+      'dashboard', 'admin', '管理后台', '博客', 'blog',
+      'landing', '官网', '个人网站', '展示页'
+    ];
+    const lowerRequirements = requirements.toLowerCase();
+    return webKeywords.some(keyword => lowerRequirements.includes(keyword));
+  }
+
+  private isNodeProject(requirements: string): boolean {
+    const nodeKeywords = [
+      'node', 'npm', 'react', 'vue', 'angular', 'svelte',
+      'next', 'nuxt', 'express', 'vite', 'webpack',
+      '前端', 'javascript', 'typescript'
+    ];
+    const lowerRequirements = requirements.toLowerCase();
+    return nodeKeywords.some(keyword => lowerRequirements.includes(keyword));
+  }
+
   private generateDefaultPlan(requirements: string): PlanStep[] {
     const steps: PlanStep[] = [];
-    
-    steps.push({
-      id: 'step-1',
-      type: 'CREATE_FILE',
-      description: '创建项目结构',
-      target: 'README.md',
-      content: `# ${requirements}\n\n项目描述`,
-      status: 'pending',
-    });
+    const isWeb = this.isWebProject(requirements);
+    const isNode = this.isNodeProject(requirements);
 
-    steps.push({
-      id: 'step-2',
-      type: 'CREATE_FILE',
-      description: '创建主程序文件',
-      target: 'index.js',
-      content: '// Main entry point\nconsole.log("Hello, World!");',
-      status: 'pending',
-    });
+    if (isWeb) {
+      if (isNode) {
+        steps.push({
+          id: 'step-1',
+          type: 'CREATE_FILE',
+          description: '创建 package.json',
+          target: 'package.json',
+          content: `{
+  "name": "web-project",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}`,
+          status: 'pending',
+        });
+
+        steps.push({
+          id: 'step-2',
+          type: 'INSTALL_PACKAGE',
+          description: '安装依赖',
+          target: '.',
+          command: 'npm install',
+          status: 'pending',
+        });
+
+        steps.push({
+          id: 'step-3',
+          type: 'CREATE_FILE',
+          description: '创建 HTML 入口文件',
+          target: 'index.html',
+          content: `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${requirements}</title>
+</head>
+<body>
+  <h1>${requirements}</h1>
+  <p>页面正在加载中...</p>
+</body>
+</html>`,
+          status: 'pending',
+        });
+
+        steps.push({
+          id: 'step-4',
+          type: 'RUN_SERVER',
+          description: '启动开发服务器',
+          target: '8080',
+          command: 'npm run dev -- --port 8080',
+          status: 'pending',
+        });
+      } else {
+        steps.push({
+          id: 'step-1',
+          type: 'CREATE_FILE',
+          description: '创建 HTML 入口文件',
+          target: 'index.html',
+          content: `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${requirements}</title>
+</head>
+<body>
+  <h1>${requirements}</h1>
+  <p>页面正在加载中...</p>
+</body>
+</html>`,
+          status: 'pending',
+        });
+
+        steps.push({
+          id: 'step-2',
+          type: 'RUN_SERVER',
+          description: '启动静态文件服务器',
+          target: '8080',
+          command: 'python3 -m http.server 8080',
+          status: 'pending',
+        });
+      }
+    } else {
+      steps.push({
+        id: 'step-1',
+        type: 'CREATE_FILE',
+        description: '创建项目结构',
+        target: 'README.md',
+        content: `# ${requirements}\n\n项目描述`,
+        status: 'pending',
+      });
+
+      steps.push({
+        id: 'step-2',
+        type: 'CREATE_FILE',
+        description: '创建主程序文件',
+        target: 'index.js',
+        content: '// Main entry point\nconsole.log("Hello, World!");',
+        status: 'pending',
+      });
+    }
 
     return steps;
   }

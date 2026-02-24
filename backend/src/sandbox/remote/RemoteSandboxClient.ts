@@ -88,12 +88,12 @@ export class RemoteSandboxClient implements ISandboxService {
     return response;
   }
 
-  async runServer(sandboxId: string, command: string, port: string = '8000', onStream?: StreamCallback): Promise<ServerResult> {
+  async runServer(sandboxId: string, command: string, port: string = '8080', onStream?: StreamCallback): Promise<ServerResult> {
     const response = await this.call<ServerResult>('/sandbox/server', { sandbox_id: sandboxId, command, port });
     return response;
   }
 
-  async runStaticServer(sandboxId: string, port: string = '8000'): Promise<{ url: string; port: number; pid: number }> {
+  async runStaticServer(sandboxId: string, port: string = '8080'): Promise<{ url: string; port: number; pid: number }> {
     const response = await this.call<{ url: string; port: number; pid: number }>('/sandbox/static-server', { sandbox_id: sandboxId, port });
     return response;
   }

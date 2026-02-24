@@ -8,6 +8,12 @@ export default function PreviewPanel() {
   const [activeTab, setActiveTab] = useState<'preview' | 'code'>('preview');
   const [codeContent, setCodeContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [previewInfo, setPreviewInfo] = useState<{
+    reachable: boolean;
+    previewType: 'iframe' | 'image' | 'text' | 'download';
+    contentType?: string;
+    url?: string;
+  } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -21,6 +27,18 @@ export default function PreviewPanel() {
       setActiveTab('code');
     }
   }, [state.activeFile]);
+
+  useEffect(() => {
+    if (state.serverUrl) {
+      const port = getServerPort(state.serverUrl);
+      fetch(`/api/preview-info/${port}`)
+        .then(res => res.json())
+        .then(data => setPreviewInfo(data))
+        .catch(() => setPreviewInfo({ reachable: false, previewType: 'download' }));
+    } else {
+      setPreviewInfo(null);
+    }
+  }, [state.serverUrl]);
 
   const loadFileContent = async (path: string) => {
     setLoading(true);
@@ -131,13 +149,53 @@ export default function PreviewPanel() {
           </div>
         ) : activeTab === 'preview' ? (
           state.serverUrl ? (
-            <iframe
-              ref={iframeRef}
-              src={`/api/preview-server/${getServerPort(state.serverUrl)}`}
-              className="preview-iframe"
-              title="Server Preview"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-            />
+            previewInfo?.reachable === false ? (
+              <div className="preview-empty">
+                <Globe size={48} className="preview-empty-icon" />
+                <span className="preview-empty-text">
+                  服务器未运行
+                </span>
+              </div>
+            ) : previewInfo?.previewType === 'image' ? (
+              <div className="preview-image">
+                <img src={previewInfo.url} alt="Preview" />
+              </div>
+            ) : previewInfo?.previewType === 'text' ? (
+              <div className="preview-text">
+                {state.activeFile ? (
+                  <Editor
+                    height="100%"
+                    language={getLanguage(state.activeFile)}
+                    value={`// 内容类型: ${previewInfo.contentType}\n// 请在新窗口打开查看完整内容`}
+                    theme="vs-dark"
+                    options={{
+                      readOnly: true,
+                      minimap: { enabled: false },
+                      fontSize: 13,
+                      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                      lineNumbers: 'on',
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                    }}
+                  />
+                ) : (
+                  <div className="preview-empty">
+                    <Code size={48} className="preview-empty-icon" />
+                    <span className="preview-empty-text">
+                      点击文件查看代码
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <iframe
+                ref={iframeRef}
+                src={`/api/preview-server/${getServerPort(state.serverUrl)}`}
+                className="preview-iframe"
+                title="Server Preview"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+              />
+            )
           ) : (
             <div className="preview-empty">
               <Globe size={48} className="preview-empty-icon" />

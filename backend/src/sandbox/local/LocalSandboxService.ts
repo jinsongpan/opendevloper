@@ -69,6 +69,8 @@ export class LocalSandboxService implements ISandboxService {
       /localhost:(\d+)/i,
       /127\.0\.0\.1:(\d+)/i,
       /port[:\s]+(\d+)/i,
+      /Local:\s*http:\/\/[^:]+:(\d+)/i,
+      /https?:\/\/[^:]+:(\d+)/i,
     ];
 
     for (const pattern of portPatterns) {
@@ -96,6 +98,23 @@ export class LocalSandboxService implements ISandboxService {
 
     console.log(`[LocalSandbox] Using default port ${defaultPort}`);
     return defaultPort;
+  }
+
+  private async verifyServerReachable(port: number): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      
+      const response = await fetch(`http://127.0.0.1:${port}/`, {
+        method: 'HEAD',
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      return response.ok || response.status === 405; // 405 = Method Not Allowed but server is running
+    } catch {
+      return false;
+    }
   }
 
   addServer(sandboxId: string, info: ServerInfo) {
@@ -382,7 +401,7 @@ export class LocalSandboxService implements ISandboxService {
     }
   }
 
-  async runServer(sandboxId: string, command: string, defaultPort: string = '8000', onStream?: StreamCallback): Promise<ServerResult> {
+  async runServer(sandboxId: string, command: string, defaultPort: string = '8080', onStream?: StreamCallback): Promise<ServerResult> {
     const projectDir = this.projectDirs.get(sandboxId);
     if (!projectDir) {
       throw new Error(`Sandbox ${sandboxId} not found`);
@@ -403,11 +422,17 @@ export class LocalSandboxService implements ISandboxService {
     };
 
     const killPort = async (port: number) => {
-      try {
-        await execAsync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`);
-        console.log(`[LocalSandbox] Killed process on port ${port}`);
-        await new Promise(r => setTimeout(r, 500));
-      } catch {}
+      for (let retry = 0; retry < 3; retry++) {
+        try {
+          await execAsync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`);
+          console.log(`[LocalSandbox] Killed process on port ${port}, retry ${retry + 1}`);
+          await new Promise(r => setTimeout(r, 1000));
+          if (await isPortAvailable(port)) {
+            console.log(`[LocalSandbox] Port ${port} is now available`);
+            return;
+          }
+        } catch {}
+      }
     };
 
     let port = parseInt(defaultPort);
@@ -472,6 +497,42 @@ export class LocalSandboxService implements ISandboxService {
       setTimeout(async () => {
         const fullOutput = output + this.getServerOutput(sandboxId);
         const actualPort = await this.detectPort(pid, fullOutput, port);
+        
+        // Verify server is actually reachable
+        const isReachable = await this.verifyServerReachable(actualPort);
+        if (!isReachable) {
+          console.error(`[LocalSandbox] Server on port ${actualPort} is not reachable, waiting longer...`);
+          // Wait another 5 seconds and try again
+          setTimeout(async () => {
+            const retryOutput = fullOutput + this.getServerOutput(sandboxId);
+            const retryPort = await this.detectPort(pid, retryOutput, port);
+            const retryUrl = `http://localhost:${retryPort}`;
+            
+            // Verify server is reachable on retry
+            const isRetryReachable = await this.verifyServerReachable(retryPort);
+            if (!isRetryReachable) {
+              console.error(`[LocalSandbox] Server still not reachable on retry port ${retryPort}`);
+              output = `⚠️ 服务器可能未正常启动，请检查日志或手动启动`;
+              resolve({ output, url: retryUrl, port: retryPort, pid, exitCode: 0 });
+              return;
+            }
+            
+            console.log(`[LocalSandbox] Retry - URL: ${retryUrl}, port: ${retryPort}`);
+            
+            this.addServer(sandboxId, {
+              sandboxId,
+              port: retryPort,
+              url: retryUrl,
+              pid,
+              startTime: Date.now()
+            });
+            
+            output = `✅ 服务器已启动: ${retryUrl}\n\n${output}\n\n如需停止服务器，请刷新页面或创建新项目。`;
+            resolve({ output, url: retryUrl, port: retryPort, pid, exitCode: 0 });
+          }, 5000);
+          return;
+        }
+        
         const url = `http://localhost:${actualPort}`;
 
         this.addServer(sandboxId, {
@@ -485,7 +546,7 @@ export class LocalSandboxService implements ISandboxService {
         output = `✅ 服务器已启动: ${url}\n\n${output}\n\n如需停止服务器，请刷新页面或创建新项目。`;
         console.log(`[LocalSandbox] Resolving with URL: ${url}, port: ${actualPort}`);
         resolve({ output, url, port: actualPort, pid, exitCode: 0 });
-      }, 5000);
+      }, 10000);
     });
   }
 
@@ -498,7 +559,7 @@ export class LocalSandboxService implements ISandboxService {
     }
   }
 
-  async runStaticServer(sandboxId: string, defaultPort: string = '8000'): Promise<{ url: string; port: number; pid: number }> {
+  async runStaticServer(sandboxId: string, defaultPort: string = '8080'): Promise<{ url: string; port: number; pid: number }> {
     const projectDir = this.projectDirs.get(sandboxId);
     if (!projectDir) {
       throw new Error(`Sandbox ${sandboxId} not found`);
@@ -528,11 +589,17 @@ export class LocalSandboxService implements ISandboxService {
     const basePort = 8000 + Math.abs(hash % 1000);
 
     const killPort = async (port: number) => {
-      try {
-        await execAsync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`);
-        console.log(`[LocalSandbox] Killed process on port ${port}`);
-        await new Promise(r => setTimeout(r, 500));
-      } catch {}
+      for (let retry = 0; retry < 3; retry++) {
+        try {
+          await execAsync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`);
+          console.log(`[LocalSandbox] Killed process on port ${port}, retry ${retry + 1}`);
+          await new Promise(r => setTimeout(r, 1000));
+          if (await isPortAvailable(port)) {
+            console.log(`[LocalSandbox] Port ${port} is now available`);
+            return;
+          }
+        } catch {}
+      }
     };
 
     let port = basePort;

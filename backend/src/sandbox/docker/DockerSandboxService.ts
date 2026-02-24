@@ -416,7 +416,7 @@ export class DockerSandboxService implements ISandboxService {
     }
   }
 
-  async runServer(sandboxId: string, command: string, defaultPort: string = '8000', onStream?: StreamCallback): Promise<ServerResult> {
+  async runServer(sandboxId: string, command: string, defaultPort: string = '8080', onStream?: StreamCallback): Promise<ServerResult> {
     const projectDir = this.projectDirs.get(sandboxId);
     if (!projectDir) {
       throw new Error(`Sandbox ${sandboxId} not found`);
@@ -524,7 +524,7 @@ export class DockerSandboxService implements ISandboxService {
     }
   }
 
-  async runStaticServer(sandboxId: string, defaultPort: string = '8000'): Promise<{ url: string; port: number; pid: number }> {
+  async runStaticServer(sandboxId: string, defaultPort: string = '8080'): Promise<{ url: string; port: number; pid: number }> {
     const projectDir = this.projectDirs.get(sandboxId);
     if (!projectDir) {
       throw new Error(`Sandbox ${sandboxId} not found`);

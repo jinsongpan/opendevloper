@@ -143,25 +143,39 @@ app.all('/api/preview-server/:port(*)', async (req, res) => {
     clearTimeout(timeoutId);
     
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    
+    const isHtml = contentType.includes('text/html');
+    
     res.set('Content-Type', contentType);
     res.set('Access-Control-Allow-Origin', '*');
     res.removeHeader('content-encoding');
     
-    res.set('Content-Security-Policy', 
-      "default-src 'none'; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; " +
-      "style-src 'self' 'unsafe-inline' http://127.0.0.1:*; " +
-      "img-src 'self' data: https: blob:; " +
-      "connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; " +
-      "frame-src 'self' http://localhost:* http://127.0.0.1:* https://*; " +
-      "worker-src 'self' blob:;"
-    );
+    if (isHtml) {
+      res.set('Content-Security-Policy', 
+        "default-src 'none'; " +
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; " +
+        "style-src 'self' 'unsafe-inline' http://127.0.0.1:*; " +
+        "img-src 'self' data: https: blob: http://127.0.0.1:*; " +
+        "connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; " +
+        "frame-src 'self' http://localhost:* http://127.0.0.1:* https://*; " +
+        "worker-src 'self' blob:;"
+      );
+    } else {
+      res.set('Content-Security-Policy', 
+        "default-src 'self'; " +
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: https: blob: http://127.0.0.1:*; " +
+        "connect-src 'self' http://localhost:* http://127.0.0.1:*; " +
+        "worker-src 'self' blob:;"
+      );
+    }
     
     res.status(response.status);
     
     let body = await response.arrayBuffer();
     
-    if (contentType.includes('text/html')) {
+    if (isHtml) {
       const decoder = new TextDecoder('utf-8');
       let htmlContent = decoder.decode(body);
       
@@ -177,10 +191,65 @@ app.all('/api/preview-server/:port(*)', async (req, res) => {
   } catch (error: any) {
     console.error('[preview-server] Error:', error.message);
     if (error.name === 'AbortError') {
-      res.status(504).send('Gateway Timeout');
+      res.status(504).send('连接超时: 服务器响应时间过长');
+    } else if (error.code === 'ECONNREFUSED') {
+      res.status(502).send('服务器未运行: 连接被拒绝，请确保项目服务器已启动');
+    } else if (error.code === 'ETIMEDOUT') {
+      res.status(502).send('连接超时: 无法连接到服务器');
     } else {
-      res.status(502).send('Backend server not reachable');
+      res.status(502).send(`服务器不可达: ${error.message}`);
     }
+  }
+});
+
+app.get('/api/preview-info/:port(*)', async (req, res) => {
+  const { port } = req.params;
+  
+  const portNum = parseInt(port);
+  if (isNaN(portNum) || portNum < 3001 || portNum > 9999) {
+    return res.json({ error: 'Port not allowed' });
+  }
+
+  const targetUrl = `http://127.0.0.1:${port}/`;
+  
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
+    const response = await fetch(targetUrl, {
+      method: 'HEAD',
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    const isHtml = contentType.includes('text/html');
+    const isImage = contentType.startsWith('image/');
+    const isJson = contentType.includes('json');
+    const isText = contentType.startsWith('text/');
+    
+    res.json({
+      reachable: true,
+      contentType,
+      previewType: isHtml ? 'iframe' : isImage ? 'image' : isJson || isText ? 'text' : 'download',
+      url: targetUrl,
+    });
+  } catch (error: any) {
+    console.error('[preview-info] Error:', error.message);
+    let errorMessage = '服务器未运行';
+    if (error.name === 'AbortError') {
+      errorMessage = '连接超时: 服务器响应时间过长';
+    } else if (error.code === 'ECONNREFUSED') {
+      errorMessage = '服务器未运行: 连接被拒绝';
+    } else if (error.code === 'ETIMEDOUT') {
+      errorMessage = '连接超时';
+    }
+    res.json({
+      reachable: false,
+      error: errorMessage,
+      code: error.code || error.name,
+    });
   }
 });
 

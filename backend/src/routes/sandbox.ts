@@ -74,7 +74,7 @@ router.post('/destroy', async (req, res) => {
 
 router.post('/plan', async (req, res) => {
   try {
-    const { requirements, settings, provider, isModification } = req.body as { requirements: string; settings?: Settings; provider?: string; isModification?: boolean };
+    const { requirements, settings, provider, isModification, history, sandboxId: reqSandboxId } = req.body as { requirements: string; settings?: Settings; provider?: string; isModification?: boolean; history?: { role: string; content: string }[]; sandboxId?: string };
     
     if (!requirements || typeof requirements !== 'string' || requirements.trim().length === 0) {
       return res.status(400).json({ error: 'Invalid requirements: must be a non-empty string' });
@@ -94,17 +94,19 @@ router.post('/plan', async (req, res) => {
     
     console.log('Provider:', finalProvider);
     console.log('Is modification:', isModification);
+    console.log('History length:', history?.length || 0);
     
     const agent = new DeepAgentsService(finalSettings, finalProvider);
     
+    const targetSandboxId = reqSandboxId || currentSandboxId;
     let existingFiles: { path: string; content: string }[] = [];
-    if (currentSandboxId) {
+    if (targetSandboxId) {
       try {
-        const files = await sandboxService.listFiles(currentSandboxId);
+        const files = await sandboxService.listFiles(targetSandboxId);
         for (const file of files) {
           if (file.type === 'file') {
             try {
-              const content = await sandboxService.readFile(currentSandboxId, file.path);
+              const content = await sandboxService.readFile(targetSandboxId, file.path);
               existingFiles.push({ path: file.path, content });
             } catch (e) {
               console.warn(`[Plan] Failed to read file ${file.path}:`, e);
@@ -116,7 +118,7 @@ router.post('/plan', async (req, res) => {
       }
     }
 
-    const steps = await agent.generatePlan(requirements, existingFiles, isModification);
+    const steps = await agent.generatePlan(requirements, existingFiles, isModification, history);
     
     const plan: ExecutionPlan = {
       id: uuidv4(),
@@ -201,7 +203,7 @@ router.post('/execute', async (req, res) => {
 
           case 'RUN_SERVER':
             if (step.command) {
-              const port = step.target || '8000';
+              const port = step.target || '8080';
               
               const serverInfo = await sandboxService.runServer(targetSandboxId, step.command, port);
               output = serverInfo.output;
@@ -223,11 +225,11 @@ router.post('/execute', async (req, res) => {
               (step.target && (step.target.endsWith('.html') || step.target.endsWith('.htm'))) ||
               (step.url && (step.url.endsWith('.html') || step.url.endsWith('.htm') || step.url.includes('.html')))
             ) {
-              const serverInfo = await sandboxService.runStaticServer(targetSandboxId, '8000');
+              const serverInfo = await sandboxService.runStaticServer(targetSandboxId, '8080');
               serverUrl = serverInfo.url;
               emitServerStarted(io, targetSandboxId, { url: serverUrl, port: serverInfo.port });
             } else {
-              const serverInfo = await sandboxService.runStaticServer(targetSandboxId, '8000');
+              const serverInfo = await sandboxService.runStaticServer(targetSandboxId, '8080');
               serverUrl = serverInfo.url;
               emitServerStarted(io, targetSandboxId, { url: serverUrl, port: serverInfo.port });
             }
@@ -319,7 +321,7 @@ router.get('/files', async (req, res) => {
         files.some((f: any) => f.type === 'directory' && f.name === 'templates');
       if (hasHtml) {
         try {
-          const serverInfo = await sandboxService.runStaticServer(sandboxId, '8000');
+          const serverInfo = await sandboxService.runStaticServer(sandboxId, '8080');
           servers = [{
             ...serverInfo,
             sandboxId,
